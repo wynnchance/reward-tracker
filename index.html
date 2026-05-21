@@ -1626,19 +1626,30 @@ function parseCSV(text) {
   return { headers, rows: dataRows };
 }
 
-function detectLogsCols(headers) {
-  const h = headers.map(x => x.toLowerCase().replace(/[^a-z]/g, ''));
+function detectLogsCols(headers, filename) {
+  // Strip BOM and normalise each header to lowercase letters only
+  const h = headers.map(x => x.replace(/^\uFEFF/, '').toLowerCase().replace(/[^a-z]/g, ''));
   const find = (...terms) => {
     for (const t of terms) {
-      const i = h.findIndex(x => x.includes(t));
+      const i = h.findIndex(x => x === t || x.includes(t));
       if (i !== -1) return headers[i];
     }
     return '';
   };
+
+  // Facility may be in a column OR encoded in the filename
+  // e.g. "Stephens County OK_7176_content_summary_logs_from..."
+  let facilityFromFile = '';
+  if (filename) {
+    const m = filename.match(/^(.+?)_[a-f0-9]{4}_/i);
+    if (m) facilityFromFile = m[1].trim();
+  }
+
   return {
     username: find('username', 'learner', 'user', 'inmate', 'student'),
-    facility: find('facilityname', 'facility', 'location', 'site'),
-    time: find('timespentsec', 'timespent', 'time', 'duration', 'seconds')
+    facility: find('facilityname', 'facility', 'location', 'site') || '',
+    time:     find('timespentsec', 'timespent', 'totalseconds', 'time', 'duration', 'seconds', 'totalhours', 'hours', 'totalh'),
+    _facilityFromFile: facilityFromFile   // bonus hint used by autoProcess
   };
 }
 
@@ -2426,7 +2437,7 @@ function openKineticChecklist(applied, total) {
 
 // ---------- CSV upload processing ----------
 function autoProcess() {
-  const detected = detectLogsCols(state.logsData.headers);
+  const detected = detectLogsCols(state.logsData.headers, state.logsData._filename || '');
   if (!detected.username || !detected.time) {
     state.colMap = detected;
     state.phase = 'map';
@@ -2460,9 +2471,9 @@ async function processCSV() {
 
     state.logsData.rows.forEach(row => {
       const username = String(row[state.colMap.username] || '').trim();
-      const facility = state.colMap.facility
-        ? normalizeFacilityName(row[state.colMap.facility] || 'Unknown')
-        : 'Unknown';
+      const _facCol = state.colMap.facility ? (row[state.colMap.facility] || '').trim() : '';
+      const _facHint = (state.colMap._facilityFromFile || '').trim();
+      const facility = normalizeFacilityName(_facCol || _facHint || 'Unknown');
       const secs = parseFloat(row[state.colMap.time] || 0) || 0;
       if (!username) return;
       facilitiesInThisCSV.add(facility);
@@ -2507,8 +2518,20 @@ function handleFile(file, type) {
   const reader = new FileReader();
   reader.onload = e => {
     const parsed = parseCSV(e.target.result);
-    if (type === 'logs') state.logsData = parsed;
-    else state.usersData = parsed;
+    parsed._filename = file.name;   // keep filename for column detection
+    if (type === 'logs') {
+      state.logsData = parsed;
+      // Auto-process immediately if columns can be detected
+      const detected = detectLogsCols(parsed.headers, file.name);
+      if (detected.username && detected.time) {
+        state.colMap = detected;
+        if (state.usersData) state.usersColMap = detectUsersCols(state.usersData.headers);
+        processCSV();
+        return;
+      }
+    } else {
+      state.usersData = parsed;
+    }
     render();
   };
   reader.readAsText(file);
