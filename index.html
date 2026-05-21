@@ -1140,6 +1140,83 @@ const SP = (() => {
   return { isHosted, loadFile, saveFile };
 })();
 
+// ---------- GitHub Gist sync ----------
+const GIST = (() => {
+  const TOKEN_KEY  = 'prodigy_gist_token';
+  const GIST_KEY   = 'prodigy_gist_id';
+
+  function getToken()  { try { return localStorage.getItem(TOKEN_KEY)  || ''; } catch { return ''; } }
+  function getGistId() { try { return localStorage.getItem(GIST_KEY)   || ''; } catch { return ''; } }
+  function setToken(t)  { try { localStorage.setItem(TOKEN_KEY, t);  } catch {} }
+  function setGistId(id){ try { localStorage.setItem(GIST_KEY, id);  } catch {} }
+  function isConfigured(){ return !!(getToken() && getGistId()); }
+
+  function headers() {
+    return {
+      'Authorization': 'Bearer ' + getToken(),
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    };
+  }
+
+  async function load() {
+    if (!isConfigured()) return { ledger: null, facilityData: null, meta: null, updatedAt: '' };
+    try {
+      const r = await fetch('https://api.github.com/gists/' + getGistId(), { headers: headers() });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const gist = await r.json();
+      function parse(name) {
+        const f = gist.files && gist.files[name];
+        if (!f || !f.content) return null;
+        try { return JSON.parse(f.content); } catch { return null; }
+      }
+      return {
+        ledger:       parse('reward_ledger.json'),
+        facilityData: parse('facility_data.json'),
+        meta:         parse('reward_meta.json'),
+        updatedAt:    gist.updated_at || ''
+      };
+    } catch(err) {
+      console.error('Gist load error:', err);
+      return { ledger: null, facilityData: null, meta: null, updatedAt: '' };
+    }
+  }
+
+  async function save(ledger, facilityData, meta, lastUpdatedAt) {
+    if (!isConfigured()) return { ok: false, reason: 'not-configured' };
+    try {
+      // Conflict check — compare updated_at before writing
+      if (lastUpdatedAt) {
+        const chk = await fetch('https://api.github.com/gists/' + getGistId(), { headers: headers() });
+        if (!chk.ok) throw new Error('Pre-save check HTTP ' + chk.status);
+        const current = await chk.json();
+        if (current.updated_at && current.updated_at !== lastUpdatedAt) {
+          return { ok: false, reason: 'conflict' };
+        }
+      }
+      const r = await fetch('https://api.github.com/gists/' + getGistId(), {
+        method: 'PATCH',
+        headers: { ...headers(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          files: {
+            'reward_ledger.json':  { content: JSON.stringify(ledger, null, 2) },
+            'facility_data.json':  { content: JSON.stringify(facilityData, null, 2) },
+            'reward_meta.json':    { content: JSON.stringify(meta, null, 2) }
+          }
+        })
+      });
+      if (!r.ok) return { ok: false, reason: 'error' };
+      const updated = await r.json();
+      return { ok: true, updatedAt: updated.updated_at || '' };
+    } catch(err) {
+      console.error('Gist save error:', err);
+      return { ok: false, reason: 'error' };
+    }
+  }
+
+  return { isConfigured, load, save, getToken, getGistId, setToken, setGistId };
+})();
+
 // ---------- Local storage fallback ----------
 const LOCAL_KEY = 'prodigy_reward_ledger_v4';
 const FACILITY_KEY = 'prodigy_facility_data_v4';
@@ -1194,6 +1271,7 @@ let state = {
     config: { hoursPerReward: DEFAULT_HOURS_PER_REWARD }
   },
   fileEtags: { ledger: '', facilityData: '', meta: '' },
+  gistUpdatedAt: '',
   filter: 'ALL',
   search: '',
   sort: 'eligible',
@@ -1347,7 +1425,18 @@ function getLastUpdatedText() {
 async function initLedger() {
   getCurrentUser();
 
-  if (SP.isHosted) {
+  if (GIST.isConfigured()) {
+    setSyncStatus('saving', 'Connecting to Gist...');
+    const g = await GIST.load();
+    if (g.ledger)       state.ledger       = g.ledger;
+    else { const local = localLoad(); if (local) state.ledger = local; }
+    if (g.facilityData) state.facilityData = g.facilityData;
+    else { const localFac = localLoadFacilities(); if (localFac) state.facilityData = localFac; }
+    if (g.meta)         state.meta         = g.meta;
+    else { const localMeta = localLoadMeta(); if (localMeta) state.meta = localMeta; }
+    state.gistUpdatedAt = g.updatedAt;
+    setSyncStatus('synced', 'Live — GitHub Gist');
+  } else if (SP.isHosted) {
     setSyncStatus('saving', 'Connecting...');
     const [r1, r2, r3] = await Promise.all([
       SP.loadFile('reward_ledger.json'),
@@ -1375,7 +1464,7 @@ async function initLedger() {
     if (localFac) state.facilityData = localFac;
     const localMeta = localLoadMeta();
     if (localMeta) state.meta = localMeta;
-    setSyncStatus('local', 'Offline mode');
+    setSyncStatus('local', 'Local only — configure Gist to share');
   }
 
   normalizeFacilityData();
@@ -1391,29 +1480,37 @@ async function initLedger() {
 }
 
 async function refreshFromServer() {
-  if (!SP.isHosted) return true;
+  if (!GIST.isConfigured() && !SP.isHosted) return true;
 
   try {
     setSyncStatus('saving', 'Refreshing...');
-    const [r1, r2, r3] = await Promise.all([
-      SP.loadFile('reward_ledger.json'),
-      SP.loadFile('facility_data.json'),
-      SP.loadFile('reward_meta.json')
-    ]);
 
-    if (r1.data) state.ledger = r1.data;
-    state.fileEtags.ledger = r1.etag;
-    if (r2.data) state.facilityData = r2.data;
-    state.fileEtags.facilityData = r2.etag;
-    if (r3.data) state.meta = r3.data;
-    state.fileEtags.meta = r3.etag;
+    if (GIST.isConfigured()) {
+      const g = await GIST.load();
+      if (g.ledger)       state.ledger       = g.ledger;
+      if (g.facilityData) state.facilityData = g.facilityData;
+      if (g.meta)         state.meta         = g.meta;
+      state.gistUpdatedAt = g.updatedAt;
+    } else {
+      const [r1, r2, r3] = await Promise.all([
+        SP.loadFile('reward_ledger.json'),
+        SP.loadFile('facility_data.json'),
+        SP.loadFile('reward_meta.json')
+      ]);
+      if (r1.data) state.ledger = r1.data;
+      state.fileEtags.ledger = r1.etag;
+      if (r2.data) state.facilityData = r2.data;
+      state.fileEtags.facilityData = r2.etag;
+      if (r3.data) state.meta = r3.data;
+      state.fileEtags.meta = r3.etag;
+    }
 
     normalizeFacilityData();
     normalizeLedger();
     syncMetaNameMap();
     state.inmates = flattenFacilities();
 
-    setSyncStatus('synced', 'Live — Shared system');
+    setSyncStatus('synced', GIST.isConfigured() ? 'Live — GitHub Gist' : 'Live — Shared system');
     return true;
   } catch (err) {
     console.error('refreshFromServer error', err);
@@ -1439,6 +1536,25 @@ async function persistAll() {
     version: (state.meta.version || 1) + 1
   };
 
+  if (GIST.isConfigured()) {
+    setSyncStatus('saving', 'Saving to Gist...');
+    const r = await GIST.save(state.ledger, state.facilityData, state.meta, state.gistUpdatedAt);
+    localSave(state.ledger);
+    localSaveFacilities(state.facilityData);
+    localSaveMeta(state.meta);
+    if (r.reason === 'conflict') {
+      setSyncStatus('error', 'Conflict — refreshing');
+      return { ok: false, reason: 'conflict' };
+    }
+    if (!r.ok) {
+      setSyncStatus('error', 'Gist save failed — local backup used');
+      return { ok: false, reason: 'error' };
+    }
+    state.gistUpdatedAt = r.updatedAt || state.gistUpdatedAt;
+    setSyncStatus('synced', 'Live — GitHub Gist');
+    return { ok: true };
+  }
+
   if (SP.isHosted) {
     setSyncStatus('saving', 'Saving...');
 
@@ -1449,7 +1565,6 @@ async function persistAll() {
     ]);
 
     if (r1.reason === 'conflict' || r2.reason === 'conflict' || r3.reason === 'conflict') {
-      // Keep whatever etags came back (some files may have succeeded — we'll re-load anyway)
       setSyncStatus('error', 'Conflict — refreshing');
       return { ok: false, reason: 'conflict' };
     }
@@ -1474,7 +1589,7 @@ async function persistAll() {
   localSave(state.ledger);
   localSaveFacilities(state.facilityData);
   localSaveMeta(state.meta);
-  setSyncStatus('local', 'Offline mode');
+  setSyncStatus('local', 'Local only — configure Gist to share');
   return { ok: true };
 }
 
@@ -3080,10 +3195,128 @@ function toggleCard(username) {
   }
 }
 
+// ---------- Gist settings modal ----------
+function openGistSettings() {
+  const existing = document.getElementById('gist-modal-overlay');
+  if (existing) existing.remove();
+
+  const configured = GIST.isConfigured();
+  const overlay = h('div', { id: 'gist-modal-overlay', class: 'modal-overlay' },
+    h('div', { class: 'modal' },
+      h('h2', {}, 'GitHub Gist Sync'),
+      h('p', { class: 'modal-subtitle' },
+        configured
+          ? 'Gist sync is active. Both you and Lauren save to the same Gist — anyone with this URL sees live data.'
+          : 'Connect a GitHub Gist so everyone using this tracker shares the same live data.'
+      ),
+      h('div', { class: 'modal-body' },
+        h('div', { class: 'form-row' },
+          h('label', { class: 'form-label', for: 'gist-token-input' }, 'GitHub Token'),
+          h('input', {
+            id: 'gist-token-input',
+            class: 'input',
+            type: 'password',
+            placeholder: 'ghp_xxxxxxxxxxxxxxxxxxxx',
+            value: GIST.getToken(),
+            style: 'width:100%;box-sizing:border-box;'
+          }),
+          h('p', { class: 'form-help' }, 'Fine-grained token with Gist read+write scope. Stored only in this browser.')
+        ),
+        h('div', { class: 'form-row' },
+          h('label', { class: 'form-label', for: 'gist-id-input' }, 'Gist ID'),
+          h('input', {
+            id: 'gist-id-input',
+            class: 'input',
+            type: 'text',
+            placeholder: 'e.g. a1b2c3d4e5f6...',
+            value: GIST.getGistId(),
+            style: 'width:100%;box-sizing:border-box;'
+          }),
+          h('p', { class: 'form-help' }, 'The ID from your Gist URL: gist.github.com/username/«this-part»')
+        ),
+        configured ? h('div', {
+          style: 'background:var(--green-bg);border:1px solid var(--green-border);border-radius:var(--radius);padding:10px 12px;font-size:12px;color:var(--green-text);'
+        }, '✓ Connected — last synced from Gist ' + (state.gistUpdatedAt ? new Date(state.gistUpdatedAt).toLocaleString() : 'n/a')) : h('span', {})
+      ),
+      h('div', { class: 'modal-footer' },
+        configured ? h('button', {
+          class: 'btn btn-ghost',
+          style: 'color:#d94f4f;margin-right:auto;',
+          onclick: function() {
+            GIST.setToken('');
+            GIST.setGistId('');
+            overlay.remove();
+            setSyncStatus('local', 'Local only — configure Gist to share');
+            toast('Gist sync disconnected');
+          }
+        }, 'Disconnect') : h('span', {}),
+        h('button', { class: 'btn btn-ghost', onclick: () => overlay.remove() }, 'Cancel'),
+        h('button', {
+          class: 'btn btn-primary',
+          onclick: async function() {
+            const token = document.getElementById('gist-token-input').value.trim();
+            const gistId = document.getElementById('gist-id-input').value.trim();
+            if (!token || !gistId) { toast('Please enter both a token and Gist ID'); return; }
+            GIST.setToken(token);
+            GIST.setGistId(gistId);
+            overlay.remove();
+            toast('Connecting to Gist...');
+            // Reload data from the Gist
+            setSyncStatus('saving', 'Connecting to Gist...');
+            const g = await GIST.load();
+            if (g.ledger || g.facilityData) {
+              if (g.ledger)       state.ledger       = g.ledger;
+              if (g.facilityData) state.facilityData = g.facilityData;
+              if (g.meta)         state.meta         = g.meta;
+              state.gistUpdatedAt = g.updatedAt;
+              normalizeFacilityData();
+              normalizeLedger();
+              syncMetaNameMap();
+              state.inmates = flattenFacilities();
+              state.phase = state.inmates.length > 0 ? 'dashboard' : 'upload';
+              setSyncStatus('synced', 'Live — GitHub Gist');
+              toast('Connected! Loaded data from Gist.');
+              render();
+            } else {
+              // Gist is empty — push current local data up
+              const saveResult = await persistAll();
+              if (saveResult.ok) {
+                toast('Connected! Local data pushed to Gist.');
+              } else {
+                toast('Token or Gist ID may be wrong — check and try again.');
+                GIST.setToken('');
+                GIST.setGistId('');
+              }
+            }
+          }
+        }, 'Save & Connect')
+      )
+    )
+  );
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.append(overlay);
+}
+
+function buildGistButton() {
+  const configured = GIST.isConfigured();
+  const icon = svgRoot({ width: 13, height: 13, viewBox: '0 0 16 16', fill: 'currentColor', style: 'flex-shrink:0;' },
+    svgEl('path', { d: 'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z' })
+  );
+  const btn = h('button', {
+    class: 'btn btn-ghost',
+    style: 'font-size:12px;gap:4px;display:flex;align-items:center;',
+    title: configured ? 'Gist sync active — click to manage' : 'Set up shared sync via GitHub Gist',
+    onclick: openGistSettings
+  }, configured ? '✓ Gist' : 'Sync');
+  btn.prepend(icon);
+  return btn;
+}
+
 // ---------- Rendering ----------
 function render() {
   document.getElementById('main').innerHTML = '';
   document.getElementById('header-actions').innerHTML = '';
+  document.getElementById('header-actions').append(buildGistButton());
   if (state.phase === 'upload') renderUpload();
   else if (state.phase === 'map') renderMap();
   else renderDashboard();
@@ -3204,205 +3437,4 @@ function renderMap() {
     selectRow('Time spent (seconds) *', state.logsData.headers, state.colMap.time, v => { state.colMap.time = v; render(); }),
     selectRow('Facility name (optional)', state.logsData.headers, state.colMap.facility, v => { state.colMap.facility = v; render(); }),
     state.usersData ? h('div', null,
-      h('div', { class: 'map-section-title', style: 'margin-top:20px;' }, 'Users CSV columns'),
-      selectRow('Username column', state.usersData.headers, state.usersColMap.username, v => { state.usersColMap.username = v; render(); }),
-      selectRow('Full name column', state.usersData.headers, state.usersColMap.fullname, v => { state.usersColMap.fullname = v; render(); })
-    ) : null,
-    h('div', { style: 'display:flex;gap:8px;margin-top:24px;' },
-      h('button', {
-        class: 'btn-primary',
-        style: 'flex:1;padding:10px;font-size:14px;',
-        onclick: processCSV,
-        ...((state.colMap.username && state.colMap.time) ? {} : { disabled: '' })
-      }, 'Process data →'),
-      h('button', {
-        onclick: () => { state.phase = state.inmates.length > 0 ? 'dashboard' : 'upload'; render(); }
-      }, '← Back')
-    )
-  ));
-}
-
-function renderSignInBanner() {
-  const input = h('input', { type: 'text', placeholder: 'Enter your name', style: 'min-width:200px;' });
-  const save = h('button', { class: 'btn-primary' }, 'Sign in');
-  save.addEventListener('click', () => {
-    if (setCurrentUserName(input.value)) {
-      toast('Signed in as ' + state.currentUser);
-      render();
-    } else {
-      toast('Please enter a name');
-    }
-  });
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') save.click(); });
-
-  return h('div', { class: 'signin-banner' },
-    h('h3', {}, '👋 Sign in to track reward activity'),
-    h('p', {}, 'Your name is recorded on the ledger so co-workers can see who claimed and applied each reward.'),
-    h('div', { class: 'signin-row' }, input, save)
-  );
-}
-
-function renderDashboard() {
-  const processed = getProcessed();
-  const eligible = processed.filter(i => i.stats.eligible > 0);
-  const totalHrs = processed.reduce((s, i) => s + i.stats.totalHours, 0);
-  const totalRewarded = processed.reduce((s, i) => s + i.stats.rewarded, 0);
-  const facilities = ['ALL', ...new Set(state.inmates.map(i => i.facility))];
-  const main = document.getElementById('main');
-
-  document.getElementById('header-actions').append(
-    buildUserChip(),
-    h('span', { class: 'divider' }),
-    h('button', { class: 'btn-sm', onclick: refreshDashboard }, '↻ Refresh'),
-    h('button', { class: 'btn-sm btn-success', onclick: openBulkApplyModal }, '✓ Bulk apply'),
-    h('button', {
-      class: 'btn-sm',
-      onclick: openExportChecklistModal,
-      title: 'Generate a printable checklist from rewards you have already applied'
-    }, '📋 Checklist'),
-    h('span', { class: 'divider' }),
-    h('button', { class: 'btn-sm', onclick: exportEligible }, '↓ Eligible'),
-    h('button', { class: 'btn-sm', onclick: exportAll }, '↓ All'),
-    h('button', {
-      class: 'btn-sm',
-      onclick: exportAudit,
-      title: 'Two CSVs — every inmate with raw seconds + calculated fields, and every reward event. Use this to verify the data is correct.'
-    }, '↓ Audit'),
-    h('button', { class: 'btn-sm btn-ghost', onclick: exportLedger, title: 'Download backup of all reward history' }, '↓ Backup'),
-    h('button', { class: 'btn-sm btn-ghost', onclick: importLedger, title: 'Restore from backup file' }, '↑ Restore'),
-    h('span', { class: 'divider' }),
-    h('button', {
-      class: 'btn-sm btn-ghost',
-      onclick: () => { state.phase = 'upload'; state.logsData = null; state.usersData = null; render(); }
-    }, '+ Add facility')
-  );
-
-  if (!getCurrentUser()) {
-    main.append(renderSignInBanner());
-  }
-
-  main.append(h('div', { class: 'last-updated-banner' },
-    h('div', {},
-      h('div', { class: 'last-updated-title' }, 'System Status'),
-      h('div', { class: 'last-updated-text' }, getLastUpdatedText())
-    ),
-    h('div', { class: 'last-updated-text' },
-      'Version ' + (state.meta.version || 1) + ' · ' + getHoursPerReward() + 'h per reward'
-    )
-  ));
-
-  const statsGrid = h('div', { class: 'stats-grid' },
-    statCard('Eligible Now', eligible.length, eligible.length > 0 ? 'green' : ''),
-    statCard('Total Inmates', processed.length),
-    statCard('Total Hours', totalHrs.toFixed(1) + 'h'),
-    statCard('Rewards Applied', totalRewarded)
-  );
-  main.append(statsGrid);
-
-  const searchEl = h('input', {
-    type: 'text',
-    class: 'search-input',
-    placeholder: 'Search name or ID...'
-  });
-  searchEl.value = state.search;
-  searchEl.addEventListener('input', e => {
-    state.search = e.target.value;
-    listEl.innerHTML = '';
-    buildList(listEl, getProcessed());
-  });
-
-  const facSel = h('select');
-  facilities.forEach(f => {
-    const o = document.createElement('option');
-    o.value = f;
-    o.textContent = f === 'ALL' ? 'All facilities' : f;
-    if (state.filter === f) o.selected = true;
-    facSel.append(o);
-  });
-  facSel.addEventListener('change', e => {
-    state.filter = e.target.value;
-    listEl.innerHTML = '';
-    buildList(listEl, getProcessed());
-  });
-
-  const sortSel = h('select');
-  [['eligible','Eligible first'],['hours','Most hours'],['name','Name A–Z']].forEach(([v,l]) => {
-    const o = document.createElement('option');
-    o.value = v;
-    o.textContent = l;
-    if (state.sort === v) o.selected = true;
-    sortSel.append(o);
-  });
-  sortSel.addEventListener('change', e => {
-    state.sort = e.target.value;
-    listEl.innerHTML = '';
-    buildList(listEl, getProcessed());
-  });
-
-  const listEl = h('div', {});
-  main.append(h('div', { class: 'controls-bar' }, searchEl, facSel, sortSel), listEl);
-  buildList(listEl, processed);
-}
-
-async function refreshDashboard() {
-  const ok = await refreshFromServer();
-  if (ok) {
-    toast('Refreshed');
-    render();
-  }
-}
-
-function statCard(label, value, cls) {
-  return h('div', { class: 'stat-card' },
-    h('div', { class: 'stat-label' }, label),
-    h('div', { class: 'stat-value' + (cls ? ' ' + cls : '') }, String(value))
-  );
-}
-
-function buildList(container, processed) {
-  container.innerHTML = '';
-  const elig = processed.filter(i => i.stats.eligible > 0);
-  const nyet = processed.filter(i => i.stats.eligible === 0);
-
-  if (!elig.length && !nyet.length) {
-    container.append(
-      h('div', { class: 'empty-state' },
-        h('div', { class: 'empty-state-title' }, 'No results'),
-        h('p', {}, 'Try adjusting your search or filter')
-      )
-    );
-    return;
-  }
-
-  if (elig.length) {
-    container.append(h('div', { class: 'section-heading' }, 'Eligible for reward — ' + elig.length + ' inmates'));
-    elig.forEach(i => container.append(inmateCard(i)));
-  }
-  if (nyet.length) {
-    container.append(h('div', { class: 'section-heading' }, 'Not yet eligible — ' + nyet.length + ' inmates'));
-    nyet.forEach(i => container.append(inmateCard(i)));
-  }
-}
-
-function inmateCard(inmate) {
-  const s = inmate.stats;
-  const rec = getLedgerRecord(inmate.username);
-  const isOpen = state.expanded === inmate.username;
-  const fullName = nameFor(inmate.username);
-  const primary = fullName || inmate.username;
-  const sub = fullName ? inmate.username : '';
-
-  let badgeText = '';
-  let badgeClass = 'badge badge-pending';
-  if (s.eligible > 0) {
-    badgeText = s.eligible + ' reward' + (s.eligible > 1 ? 's' : '');
-    badgeClass = 'badge badge-eligible';
-  } else {
-    badgeText = fmtHrs(s.hoursUntilNext) + ' needed';
-  }
-
-  const header = h('div', {
-    class: 'inmate-header',
-    onclick: () => toggleCard(inmate.username)
-  },
-    h('div', { class: badgeClass }, bad
+      h('div', { class: 'map-section-title', style: 'margin-to
