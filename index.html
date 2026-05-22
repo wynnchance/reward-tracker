@@ -3617,7 +3617,7 @@ function buildList(container, processed) {
   const weeklyCapped = processed.filter(i => i.stats.eligible === 0 && i.stats.weeklyLimitReached);
   const nyet = processed.filter(i => i.stats.eligible === 0 && !i.stats.weeklyLimitReached);
 
-  if (!elig.length && !nyet.length) {
+  if (!elig.length && !weeklyCapped.length && !nyet.length) {
     container.append(
       h('div', { class: 'empty-state' },
         h('div', { class: 'empty-state-title' }, 'No results'),
@@ -3745,6 +3745,4 @@ function detailStat(label, value) {
 }
 
 document.addEventListener('DOMContentLoaded', initLedger);
-</script>
-</body>
-</html>
+</
