@@ -510,6 +510,12 @@
     border: 1px solid var(--border);
   }
 
+  .badge-week-limit {
+    background: var(--amber-bg);
+    color: var(--amber-text);
+    border: 1px solid var(--amber-border);
+  }
+
   .inmate-name {
     flex: 1;
     min-width: 0;
@@ -1245,7 +1251,8 @@ let state = {
     lastSavedAt: '',
     version: 1,
     nameMap: {},
-    config: { hoursPerReward: DEFAULT_HOURS_PER_REWARD }
+    config: { hoursPerReward: DEFAULT_HOURS_PER_REWARD },
+    facilityConfig: {}
   },
   fileEtags: { ledger: '', facilityData: '', meta: '' },
   gistUpdatedAt: '',
@@ -1259,6 +1266,22 @@ let state = {
 function getHoursPerReward() {
   const v = state.meta && state.meta.config && state.meta.config.hoursPerReward;
   return (typeof v === 'number' && v > 0) ? v : DEFAULT_HOURS_PER_REWARD;
+}
+
+function getWeekStart() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay()); // Sunday = day 0
+  return d;
+}
+function rewardsThisWeekCount(rec) {
+  const ws = getWeekStart();
+  return (rec.rewardHistory || []).filter(e => new Date(e.appliedAt) >= ws).length;
+}
+function getFacilityWeeklyLimit(facility) {
+  const fc = state.meta && state.meta.facilityConfig && state.meta.facilityConfig[facility];
+  if (fc && typeof fc.weeklyLimit === 'number' && fc.weeklyLimit > 0) return fc.weeklyLimit;
+  return 1; // default: 1 reward per week
 }
 
 // ---------- Normalizers ----------
@@ -1344,6 +1367,9 @@ function syncMetaNameMap() {
   if (!state.meta.nameMap || typeof state.meta.nameMap !== 'object') state.meta.nameMap = {};
   if (!state.meta.config || typeof state.meta.config !== 'object') {
     state.meta.config = { hoursPerReward: DEFAULT_HOURS_PER_REWARD };
+  }
+  if (!state.meta.facilityConfig || typeof state.meta.facilityConfig !== 'object') {
+    state.meta.facilityConfig = {};
   }
   state.nameMap = { ...state.meta.nameMap, ...state.nameMap };
   state.meta.nameMap = state.nameMap;
@@ -1715,9 +1741,13 @@ function getStats(inmate) {
   const rewarded = rec.rewarded || 0;
   const hoursApplied = rewarded * hpr;
   const banked = Math.max(totalHours - hoursApplied, 0);
-  const eligible = Math.floor(banked / hpr);
+  const weeklyLimit = getFacilityWeeklyLimit(inmate.facility);
+  const thisWeekCount = rewardsThisWeekCount(rec);
+  const weeklyRemaining = Math.max(weeklyLimit - thisWeekCount, 0);
+  const hoursEligible = Math.floor(banked / hpr);
+  const eligible = Math.min(hoursEligible, weeklyRemaining);
   const remainder = banked % hpr;
-  const hoursUntilNext = eligible > 0 ? 0 : (hpr - remainder || hpr);
+  const hoursUntilNext = hoursEligible > 0 ? 0 : (hpr - remainder || hpr);
   const pct = Math.min((remainder / hpr) * 100, 100);
 
   return {
@@ -1726,6 +1756,11 @@ function getStats(inmate) {
     hoursApplied,
     banked,
     eligible,
+    hoursEligible,
+    weeklyLimit,
+    thisWeekCount,
+    weeklyRemaining,
+    weeklyLimitReached: weeklyRemaining === 0 && hoursEligible > 0,
     hoursUntilNext,
     pct,
     note: rec.note || '',
@@ -2645,17 +2680,45 @@ function openRenameModal() {
 function openSettingsModal() {
   if (!requireSignIn()) return;
   openModal(close => {
-    const input = h('input', { type: 'number', min: '0.5', step: '0.5', value: String(getHoursPerReward()), style: 'width:100px;' });
-    setTimeout(() => input.focus(), 30);
+    const hprInput = h('input', { type: 'number', min: '0.5', step: '0.5', value: String(getHoursPerReward()), style: 'width:100px;' });
+    setTimeout(() => hprInput.focus(), 30);
+
+    // Build per-facility weekly limit inputs
+    const facilities = Object.keys(state.facilityData).filter(f => f !== 'Unknown').sort();
+    const weeklyLimitInputs = {};
+    const facilityRows = facilities.map(fac => {
+      const current = getFacilityWeeklyLimit(fac);
+      const inp = h('input', { type: 'number', min: '1', step: '1', value: String(current), style: 'width:80px;' });
+      weeklyLimitInputs[fac] = inp;
+      return h('div', { style: 'display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);' },
+        h('span', { style: 'font-size:13px;' }, fac),
+        h('div', { style: 'display:flex;gap:6px;align-items:center;' },
+          inp,
+          h('span', { style: 'color:var(--text-muted);font-size:12px;' }, '/ week')
+        )
+      );
+    });
 
     const save = h('button', { class: 'btn-primary' }, 'Save');
     save.addEventListener('click', async () => {
-      const val = parseFloat(input.value);
-      if (!(val > 0)) { toast('Must be a positive number'); return; }
+      const hprVal = parseFloat(hprInput.value);
+      if (!(hprVal > 0)) { toast('Hours per reward must be a positive number'); return; }
+
+      let weeklyError = false;
+      const newFacConfig = {};
+      for (const [fac, inp] of Object.entries(weeklyLimitInputs)) {
+        const v = parseInt(inp.value, 10);
+        if (!(v >= 1)) { toast('Weekly limit for ' + fac + ' must be at least 1'); weeklyError = true; break; }
+        newFacConfig[fac] = { ...(state.meta.facilityConfig[fac] || {}), weeklyLimit: v };
+      }
+      if (weeklyError) return;
+
       const result = await performAction(() => {
         if (!state.meta.config) state.meta.config = {};
-        state.meta.config.hoursPerReward = val;
-        return { ok: true, message: 'Settings saved — ' + val + 'h per reward' };
+        state.meta.config.hoursPerReward = hprVal;
+        if (!state.meta.facilityConfig) state.meta.facilityConfig = {};
+        Object.assign(state.meta.facilityConfig, newFacConfig);
+        return { ok: true, message: 'Settings saved' };
       });
       toast(result.message);
       if (result.ok) { close(); render(); }
@@ -2663,15 +2726,22 @@ function openSettingsModal() {
 
     return h('div', {},
       h('h2', {}, 'Settings'),
-      h('p', { class: 'modal-subtitle' }, 'Affects eligibility calculations for all inmates immediately.'),
+      h('p', { class: 'modal-subtitle' }, 'Changes sync to all users via Gist.'),
       h('div', { class: 'form-row' },
         h('label', { class: 'form-label' }, 'Hours of coursework per reward'),
         h('div', { style: 'display:flex;gap:8px;align-items:center;' },
-          input,
+          hprInput,
           h('span', { style: 'color:var(--text-muted);font-size:13px;' }, 'hours')
         ),
-        h('div', { class: 'form-help' }, 'Default is ' + DEFAULT_HOURS_PER_REWARD + ' hours. Changes apply across all facilities.')
+        h('div', { class: 'form-help' }, 'Default is ' + DEFAULT_HOURS_PER_REWARD + ' hours. Applies across all facilities.')
       ),
+      facilities.length ? h('div', { style: 'margin-top:20px;' },
+        h('div', { style: 'font-size:13px;font-weight:600;margin-bottom:4px;' }, 'Weekly reward limit per facility'),
+        h('div', { class: 'form-help', style: 'margin-bottom:8px;' }, 'Max rewards per inmate per calendar week (Sun–Sat). Bulk apply and single apply both respect this limit.'),
+        h('div', { style: 'border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;' },
+          ...facilityRows
+        )
+      ) : null,
       h('div', { class: 'modal-footer' },
         h('button', { onclick: close }, 'Cancel'),
         save
@@ -3544,7 +3614,8 @@ function statCard(label, value, cls) {
 function buildList(container, processed) {
   container.innerHTML = '';
   const elig = processed.filter(i => i.stats.eligible > 0);
-  const nyet = processed.filter(i => i.stats.eligible === 0);
+  const weeklyCapped = processed.filter(i => i.stats.eligible === 0 && i.stats.weeklyLimitReached);
+  const nyet = processed.filter(i => i.stats.eligible === 0 && !i.stats.weeklyLimitReached);
 
   if (!elig.length && !nyet.length) {
     container.append(
@@ -3560,8 +3631,12 @@ function buildList(container, processed) {
     container.append(h('div', { class: 'section-heading' }, 'Eligible for reward — ' + elig.length + ' inmates'));
     elig.forEach(i => container.append(inmateCard(i)));
   }
+  if (weeklyCapped.length) {
+    container.append(h('div', { class: 'section-heading' }, 'Weekly limit reached — ' + weeklyCapped.length + ' inmate' + (weeklyCapped.length !== 1 ? 's' : '')));
+    weeklyCapped.forEach(i => container.append(inmateCard(i)));
+  }
   if (nyet.length) {
-    container.append(h('div', { class: 'section-heading' }, 'Not yet eligible — ' + nyet.length + ' inmates'));
+    container.append(h('div', { class: 'section-heading' }, 'Not yet eligible — ' + nyet.length + ' inmate' + (nyet.length !== 1 ? 's' : '')));
     nyet.forEach(i => container.append(inmateCard(i)));
   }
 }
@@ -3579,6 +3654,9 @@ function inmateCard(inmate) {
   if (s.eligible > 0) {
     badgeText = s.eligible + ' reward' + (s.eligible > 1 ? 's' : '');
     badgeClass = 'badge badge-eligible';
+  } else if (s.weeklyLimitReached) {
+    badgeText = s.thisWeekCount + '/' + s.weeklyLimit + ' this week';
+    badgeClass = 'badge badge-week-limit';
   } else {
     badgeText = fmtHrs(s.hoursUntilNext) + ' needed';
   }
@@ -3608,7 +3686,8 @@ function inmateCard(inmate) {
       detailStat('Total Hours', s.totalHours.toFixed(2)),
       detailStat('Banked Hours', s.banked.toFixed(2)),
       detailStat('Rewards Available', s.eligible),
-      detailStat('Rewards Applied', s.rewarded)
+      detailStat('Rewards Applied', s.rewarded),
+      detailStat('This Week', s.thisWeekCount + ' of ' + s.weeklyLimit + ' used')
     ),
     h('div', { class: 'action-row' },
       rec.claimedBy && rec.claimedBy !== getCurrentUser()
