@@ -3746,5 +3746,241 @@ function detailStat(label, value) {
 
 document.addEventListener('DOMContentLoaded', initLedger);
 </script>
+<script>
+(function () {
+  // ---- helpers ----------------------------------------------------------
+  function mtNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+  function mtAliases() { state.meta = state.meta || {}; state.meta.aliases = state.meta.aliases || {}; return state.meta.aliases; }
+  function mtNameOf(u) { return (state.nameMap && (state.nameMap[u] || state.nameMap[String(u)])) || (state.meta && state.meta.nameMap && state.meta.nameMap[u]) || ''; }
+  function mtHrs(secs) { return (Number(secs || 0) / 3600); }
+
+  // Pre-migration coursework time (in SECONDS) for accounts whose hours were lost in the
+  // 5/21/2026 Kolibri server migration. Source: content_summary_logs export dated 2026-05-21.
+  // Used to credit recovered hours when an orphaned old account is folded into a current one.
+  const MT_SNAPSHOT = {"06mm":23937,"101074":490,"102337":9374,"107989":37343,"109809":21122,"1111168":406,"111168":30028,"113291":5643,"113433":22819,"1234":448,"145736":9496,"151883":35310,"152070":21112,"157964":18289,"160739":161,"161540":26863,"163253":23606,"164334":70380,"165765":52208,"166305":31821,"170884":25837,"174504":7310,"177880":4136,"184592":12668,"184639":39335,"189559":365,"189699":725554,"19284":12415,"19451":3558,"197508":199625,"200377":5463,"200578":23427,"201422":171,"201831":8521,"202255":21251,"202619":38917,"204117":45336,"205286":34904,"205541":483,"206019":16627,"207216":15856,"207346":42973,"207429":46747,"209583":40293,"210376":112463,"211172":41142,"212209":8672,"212219":9582,"212303":530,"35941":4014,"42857":9363,"4312":3950,"45850":3982,"46840":110,"471259":10620,"47618":7407,"486232":3276,"517971":868,"518849":1220,"525702":1348,"525779":2245,"56364":3129,"56923":2177,"65125":47584,"6624":13793,"67446":44830,"72206":482,"76630":9116,"78888":11870,"82348":31740,"85121":2039,"85606":4315,"87647":9815,"87733":22919,"8790":54670,"89023":1281,"8946":1615,"89770":11188,"92255":6641,"96938":30678,"99313":37351,"Alan":24613,"AmeilR202257":21091,"Brittany":5890,"BubbaJack":266,"Caleb147":4724,"Cody":109502,"Conan":2054,"DonJuan23":47340,"Edwin1991":19760,"Gettingwashed88":25,"Glitchless":25501,"Hunter":506,"JAMIEMAYSE":7116,"JBlastFrm200":3333,"Jack":180,"Justin":1127,"King87":10701,"MadaraUchiha2026":66213,"Randall123":9183,"Ricky1234":17011,"Robert":3613,"Robert1987":2085,"ahmed2425":18859,"bad1957":5130,"bigscoot":5776,"billbob86":17401,"cerebrus":16465,"codyleeold":685,"cwynn":7,"djonesw":23902,"dravin":7379,"flentking6":3314,"hyderyan":5598,"jaycward1992":140,"karen":33109,"kfingers88":12939,"kyleallen":287,"littlebaby":4371,"loverboy27":1703,"manuel":60,"mayse":2285,"mike":17702,"mikewatts":21312,"nashoba":6433,"oldyn1":16269,"pablo":10132,"rob":797,"robwigg":9368,"shanna":1657,"sneako":49469,"thomas":6382,"treytenoffset33":17338,"vans44":13,"wsaladin":3408};
+
+  // Resolve a username to its final primary, following alias chains safely.
+  function mtResolve(u) {
+    const a = mtAliases(); let cur = u, seen = {};
+    while (a[cur] && !seen[cur]) { seen[cur] = 1; cur = a[cur]; }
+    return cur;
+  }
+
+  // ---- DURABILITY PATCH -------------------------------------------------
+  // Collapse aliased usernames every time the roster is (re)built — including
+  // after a fresh Kolibri import — so merged accounts never reappear split,
+  // and credit recovered pre-migration hours for orphaned old usernames.
+  if (!flattenFacilities.__mtPatched) {
+    const _flatten = flattenFacilities;
+    window.flattenFacilities = function () {
+      const list = _flatten.apply(this, arguments);
+      const a = mtAliases();
+      if (!Object.keys(a).length) return list;
+      const liveSet = {}; list.forEach(i => liveSet[i.username] = true);
+      const byPrimary = {}, order = [];
+      for (const inm of list) {
+        const primary = mtResolve(inm.username);
+        if (!byPrimary[primary]) { byPrimary[primary] = Object.assign({}, inm, { username: primary }); order.push(primary); }
+        else { byPrimary[primary].totalSecs = (byPrimary[primary].totalSecs || 0) + (inm.totalSecs || 0); }
+      }
+      // Credit recovered pre-migration hours for folded ORPHAN usernames only (not in the
+      // live roster), so we never double-count an account that still has current hours.
+      Object.keys(a).forEach(u => {
+        if (liveSet[u]) return;
+        const secs = MT_SNAPSHOT[u]; if (!secs) return;
+        const p = mtResolve(u);
+        if (!byPrimary[p]) { byPrimary[p] = { username: p, facility: '', totalSecs: 0, __recovered: true }; order.push(p); }
+        byPrimary[p].totalSecs = (byPrimary[p].totalSecs || 0) + secs;
+      });
+      return order.map(p => byPrimary[p]);
+    };
+    window.flattenFacilities.__mtPatched = true;
+  }
+
+  // ---- DETECTION --------------------------------------------------------
+  function mtBuildGroups() {
+    const a = mtAliases();
+    const hours = {}, inRoster = {};
+    Object.values(state.facilityData || {}).forEach(rec => (rec.inmates || []).forEach(i => {
+      const u = String(i.username); hours[u] = (hours[u] || 0) + (i.totalSecs || 0); inRoster[u] = true;
+    }));
+    const users = new Set();
+    Object.keys(state.ledger || {}).forEach(u => users.add(String(u)));
+    Object.keys(hours).forEach(u => users.add(u));
+    Object.keys((state.meta && state.meta.nameMap) || {}).forEach(u => users.add(String(u)));
+    Object.keys(state.nameMap || {}).forEach(u => users.add(String(u)));
+
+    const groups = {};
+    users.forEach(u => {
+      const name = mtNameOf(u);
+      const key = mtNorm(name) || ('__noname__' + u);
+      (groups[key] = groups[key] || { name: name || '(no name on file)', accounts: [] }).accounts.push({
+        username: u,
+        name: name,
+        rewards: (state.ledger[u] && state.ledger[u].rewarded) || 0,
+        hours: hours[u] != null ? mtHrs(hours[u]) : null,
+        recovered: (!inRoster[u] && MT_SNAPSHOT[u]) ? mtHrs(MT_SNAPSHOT[u]) : 0,
+        inRoster: !!inRoster[u],
+        aliasedTo: a[u] || null
+      });
+    });
+
+    const out = [];
+    Object.values(groups).forEach(g => {
+      if (g.accounts.length < 2) return;
+      const distinctPrimaries = new Set(g.accounts.map(x => mtResolve(x.username)));
+      g.fullyMerged = distinctPrimaries.size === 1;
+      g.ambiguous = (g.name.indexOf(' ') <= 0) || /^\d+$/.test(g.name.replace(/\s/g, '')) || g.name === '(no name on file)';
+      out.push(g);
+    });
+    out.sort((x, y) => (x.fullyMerged - y.fullyMerged) || (mtGroupRewards(y) - mtGroupRewards(x)));
+    return out;
+  }
+  function mtGroupRewards(g) { return g.accounts.reduce((s, a) => s + (a.rewards || 0), 0); }
+
+  function mtDefaultPrimary(g) {
+    const cand = g.accounts.slice().sort((a, b) =>
+      (b.inRoster - a.inRoster) || ((b.hours || 0) - (a.hours || 0)) || ((b.rewards || 0) - (a.rewards || 0))
+    );
+    return cand[0].username;
+  }
+
+  // ---- APPLY (persisted via the app's own conflict-safe path) -----------
+  function mtApplyMerge(primary, foldList) {
+    return performAction(function () {
+      const a = mtAliases();
+      const prec = getLedgerRecord(primary);
+      ensureRewardHistory(prec);
+      let addR = 0, addH = [];
+      foldList.forEach(u => {
+        if (u === primary) return;
+        const r = state.ledger[u];
+        if (r) { addR += (r.rewarded || 0); addH = addH.concat(r.rewardHistory || []); delete state.ledger[u]; }
+        a[u] = primary;
+        Object.keys(a).forEach(k => { if (a[k] === u) a[k] = primary; });
+      });
+      prec.rewarded = (prec.rewarded || 0) + addR;
+      prec.rewardHistory = (prec.rewardHistory || []).concat(addH).filter(x => x && x.appliedAt);
+      prec.rewardHistory.sort((x, y) => new Date(x.appliedAt) - new Date(y.appliedAt));
+      const others = foldList.filter(u => u !== primary);
+      const tag = 'Merged ' + others.length + ' account(s) [' + others.join(', ') + '] on ' + new Date().toLocaleDateString();
+      prec.note = prec.note ? (prec.note + ' | ' + tag) : tag;
+      state.ledger[primary] = prec;
+      state.inmates = flattenFacilities();
+      return { ok: true, message: 'Merged into ' + (displayName(primary) || primary) };
+    });
+  }
+
+  // ---- UI ---------------------------------------------------------------
+  function mtOpenModal() {
+    openModal(function (close) {
+      const wrap = h('div', {});
+      wrap.append(h('h2', {}, 'Merge duplicate accounts'));
+      wrap.append(h('p', { class: 'modal-subtitle' },
+        'Fold an inmate’s duplicate Kolibri usernames into one. Reward counts and history combine; current hours are summed, and hours lost in the 5/21 migration are recovered when an orphaned old account is folded in. The merge sticks across future Kolibri imports. Always confirm matches — especially first-name-only ones — before merging.'));
+      const search = h('input', { type: 'text', placeholder: 'Filter by name…', style: 'width:100%;margin:8px 0 4px;' });
+      wrap.append(search);
+      const count = h('div', { class: 'form-help', style: 'margin-bottom:8px;' }, '');
+      wrap.append(count);
+      const listEl = h('div', { style: 'max-height:55vh;overflow:auto;display:flex;flex-direction:column;gap:10px;' });
+      wrap.append(listEl);
+      wrap.append(h('div', { class: 'modal-footer' }, h('button', { onclick: close }, 'Close')));
+
+      let groups = mtBuildGroups();
+
+      function draw() {
+        const q = mtNorm(search.value);
+        const shown = groups.filter(g => !q || mtNorm(g.name).includes(q) || g.accounts.some(a => mtNorm(a.username).includes(q)));
+        const pending = groups.filter(g => !g.fullyMerged).length;
+        count.textContent = pending + ' inmate(s) with un-merged duplicates · ' + groups.length + ' total groups';
+        listEl.textContent = '';
+        if (!shown.length) { listEl.append(h('div', { class: 'form-help' }, 'No matches.')); return; }
+        shown.forEach(g => listEl.append(mtGroupCard(g, redrawAfterMerge)));
+      }
+      function redrawAfterMerge() { groups = mtBuildGroups(); draw(); render(); }
+
+      search.addEventListener('input', draw);
+      draw();
+      setTimeout(() => search.focus(), 30);
+      return wrap;
+    }, { wide: true });
+  }
+
+  function mtGroupCard(g, onMerged) {
+    const card = h('div', { style: 'border:1px solid var(--border);border-radius:var(--radius);padding:10px;background:var(--surface);' });
+    const title = h('div', { style: 'font-weight:600;margin-bottom:6px;' }, g.name);
+    if (g.fullyMerged) title.append(h('span', { style: 'margin-left:8px;font-weight:500;color:var(--green-text);font-size:12px;' }, '✓ merged'));
+    if (g.ambiguous && !g.fullyMerged) title.append(h('span', { style: 'margin-left:8px;font-weight:500;color:var(--amber-text);font-size:12px;' }, '⚠ verify same person'));
+    card.append(title);
+
+    if (g.fullyMerged) {
+      const primary = mtResolve(g.accounts[0].username);
+      const rec = state.ledger[primary] || {};
+      card.append(h('div', { class: 'form-help' }, 'All folded into ' + primary + ' — ' + (rec.rewarded || 0) + ' rewards.'));
+      return card;
+    }
+
+    const chosen = { primary: mtDefaultPrimary(g), fold: {} };
+    g.accounts.forEach(a => { chosen.fold[a.username] = true; });
+
+    const rows = h('div', { style: 'display:flex;flex-direction:column;gap:3px;margin-bottom:6px;' });
+    const preview = h('div', { class: 'form-help', style: 'margin:4px 0;' }, '');
+    function refresh() {
+      const incl = g.accounts.filter(a => a.username === chosen.primary || chosen.fold[a.username]);
+      const r = incl.reduce((s, a) => s + (a.rewards || 0), 0);
+      const hh = incl.reduce((s, a) => s + (a.hours || 0) + (a.recovered || 0), 0);
+      const rec = incl.reduce((s, a) => s + (a.recovered || 0), 0);
+      preview.textContent = '→ Result on ' + chosen.primary + ': ' + r + ' rewards, ' + hh.toFixed(2) + 'h'
+        + (rec > 0.01 ? ' (incl. ' + rec.toFixed(2) + 'h recovered from pre-migration)' : '');
+    }
+    g.accounts.forEach(a => {
+      const radio = h('input', { type: 'radio', name: 'pri_' + mtNorm(g.name) + Math.random().toString(36).slice(2, 6), style: 'margin-right:4px;' });
+      radio.checked = (a.username === chosen.primary);
+      radio.addEventListener('change', () => { chosen.primary = a.username; chosen.fold[a.username] = true; refresh(); });
+      const chk = h('input', { type: 'checkbox', style: 'margin:0 4px 0 10px;' });
+      chk.checked = !!chosen.fold[a.username];
+      chk.addEventListener('change', () => { chosen.fold[a.username] = chk.checked; refresh(); });
+      const meta = (a.hours == null ? 'no hours' : a.hours.toFixed(2) + 'h') + ' · ' + (a.rewards || 0) + ' rewards · ' + (a.inRoster ? 'active' : 'orphan')
+        + (a.recovered > 0.01 ? ' · +' + a.recovered.toFixed(2) + 'h recoverable' : '');
+      const row = h('label', { style: 'display:flex;align-items:center;font-size:13px;cursor:pointer;' },
+        radio, h('span', { style: 'min-width:54px;color:var(--text-muted);font-size:11px;' }, 'primary'),
+        chk, h('span', { style: 'font-family:var(--mono);' }, a.username),
+        h('span', { style: 'margin-left:8px;color:var(--text-muted);' }, '— ' + meta));
+      rows.append(row);
+    });
+    card.append(rows, preview);
+    const btn = h('button', { class: 'btn-sm btn-primary' }, 'Merge group');
+    btn.addEventListener('click', async () => {
+      const fold = g.accounts.map(a => a.username).filter(u => u === chosen.primary || chosen.fold[u]);
+      const others = fold.filter(u => u !== chosen.primary);
+      if (!others.length) { toast('Pick at least one account to fold in'); return; }
+      btn.disabled = true; btn.textContent = 'Merging…';
+      const res = await mtApplyMerge(chosen.primary, fold);
+      toast(res.message || 'Merged');
+      onMerged();
+    });
+    card.append(btn);
+    refresh();
+    return card;
+  }
+
+  // ---- BUTTON INJECTION -------------------------------------------------
+  function mtInjectButton() {
+    const host = document.getElementById('header-actions');
+    if (!host || document.getElementById('mt-merge-btn')) return;
+    const btn = h('button', { id: 'mt-merge-btn', class: 'btn-sm btn-ghost', title: 'Merge duplicate inmate accounts', onclick: mtOpenModal }, 'Merge accts');
+    host.prepend(btn);
+  }
+  if (!render.__mtPatched) {
+    const _render = render;
+    window.render = function () { const r = _render.apply(this, arguments); try { mtInjectButton(); } catch (e) {} return r; };
+    window.render.__mtPatched = true;
+  }
+
+  try { if (Object.keys(mtAliases()).length) { state.inmates = flattenFacilities(); } } catch (e) {}
+  try { mtInjectButton(); } catch (e) {}
+  window.mtBuildGroups = mtBuildGroups; // exposed for diagnostics
+})();
+</script>
 </body>
 </html>
