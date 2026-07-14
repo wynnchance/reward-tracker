@@ -539,9 +539,13 @@ function renderLearnerOptions() {
   const q = (document.getElementById('f-search').value || '').toLowerCase().trim();
   const sel = document.getElementById('f-learner');
   const cur = state.selected;
+  // Token-based search: each word must appear somewhere in the name OR username,
+  // in any order. So "gerard silva" still finds "Gerardo silva jr".
+  const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
   const filtered = state.learners.filter(l => {
-    if (!q) return true;
-    return (l.fullname || '').toLowerCase().includes(q) || l.username.toLowerCase().includes(q);
+    if (!tokens.length) return true;
+    const hay = ((l.fullname || '') + ' ' + l.username).toLowerCase();
+    return tokens.every(tok => hay.includes(tok));
   });
   sel.innerHTML = '';
   filtered.forEach(l => {
