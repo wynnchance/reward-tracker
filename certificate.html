@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Certificate Generator — Prodigy Solutions</title>
+<style>
+  :root {
+    --bg: #f7f6f3;
+    --surface: #ffffff;
+    --surface2: #f0efe9;
+    --border: #e2e0d8;
+    --border-strong: #c8c6bc;
+    --text: #1a1917;
+    --text-muted: #706e67;
+    --text-faint: #a09e97;
+    --green-bg: #eaf5ec;
+    --green-text: #1e6b32;
+    --green-border: #b4debb;
+    --gold: #a67c1a;
+    --gold-soft: #c9a445;
+    --radius: 8px;
+    --radius-lg: 12px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.09);
+    --mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --serif: Georgia, 'Times New Roman', 'Cambria', serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--sans); background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.45; }
+
+  /* ---------- App chrome ---------- */
+  header.appbar {
+    height: 56px; background: var(--surface); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; padding: 0 20px;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .logo { display: flex; align-items: center; gap: 10px; }
+  .logo-icon { width: 30px; height: 30px; background: #1a1917; border-radius: 7px; display: flex; align-items: center; justify-content: center; }
+  .logo-text { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; }
+  .logo-sub { font-size: 11px; color: var(--text-muted); }
+  .appbar-actions { display: flex; align-items: center; gap: 10px; }
+
+  button {
+    font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--border-strong); background: var(--surface); color: var(--text);
+    padding: 8px 14px; border-radius: var(--radius); transition: background .12s, box-shadow .12s;
+  }
+  button:hover { background: var(--surface2); }
+  button.primary { background: #1a1917; color: #fff; border-color: #1a1917; }
+  button.primary:hover { background: #333; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 22px 20px 60px; }
+
+  /* ---------- Upload ---------- */
+  .upload-hero { text-align: center; padding: 40px 0 8px; }
+  .upload-hero h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .upload-hero p { color: var(--text-muted); margin: 0 auto; max-width: 560px; }
+  .drops { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 26px 0 10px; }
+  @media (max-width: 720px) { .drops { grid-template-columns: 1fr; } }
+  .drop {
+    border: 2px dashed var(--border-strong); border-radius: var(--radius-lg); background: var(--surface);
+    padding: 26px 20px; text-align: center; transition: border-color .12s, background .12s;
+  }
+  .drop.drag { border-color: var(--green-text); background: var(--green-bg); }
+  .drop.loaded { border-style: solid; border-color: var(--green-border); background: var(--green-bg); }
+  .drop h3 { margin: 0 0 4px; font-size: 15px; }
+  .drop .req { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--gold); }
+  .drop .opt { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint); }
+  .drop p { color: var(--text-muted); font-size: 12.5px; margin: 6px 0 14px; }
+  .drop .status { font-size: 12.5px; color: var(--green-text); font-weight: 600; margin-top: 10px; min-height: 16px; }
+  .drop .fildebtn { font-size: 12.5px; }
+
+  /* ---------- Editor layout ---------- */
+  .editor { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .editor { grid-template-columns: 1fr; } }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); position: sticky; top: 76px; }
+  .panel-body { padding: 16px; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin: 0 0 12px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+  .field input, .field select, .field textarea {
+    width: 100%; font-family: inherit; font-size: 13px; color: var(--text);
+    border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 7px 9px; background: var(--surface);
+  }
+  .field textarea { resize: vertical; min-height: 54px; line-height: 1.4; }
+  .field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--green-border); outline-offset: -1px; border-color: var(--green-text); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .hint { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
+  .panel-foot { border-top: 1px solid var(--border); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+
+  /* ---------- Preview ---------- */
+  .preview-scroll { display: flex; flex-direction: column; gap: 20px; align-items: center; }
+  .page {
+    background: #fff; width: 8.5in; min-height: 11in; box-shadow: var(--shadow-md);
+    padding: 0.5in; position: relative; color: #1a1917;
+  }
+  @media (max-width: 900px) { .page { width: 100%; min-height: 0; } }
+
+  /* Certificate */
+  .cert-frame { border: 3px solid var(--gold); border-radius: 4px; height: 10in; padding: 0.42in 0.55in; position: relative; display: flex; flex-direction: column; }
+  .cert-frame:before { content: ""; position: absolute; inset: 7px; border: 1px solid var(--gold-soft); border-radius: 3px; pointer-events: none; }
+  .cert-inner { position: relative; z-index: 1; display: flex; flex-direction: column; height: 100%; text-align: center; }
+  .cert-brand { display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .cert-brand .logo-icon { width: 34px; height: 34px; }
+  .cert-brand-name { font-size: 15px; font-weight: 700; letter-spacing: .02em; }
+  .cert-brand-sub { font-size: 10.5px; color: var(--text-muted); letter-spacing: .06em; text-transform: uppercase; }
+  .cert-eyebrow { margin-top: 20px; font-size: 12px; letter-spacing: .35em; text-transform: uppercase; color: var(--gold); font-weight: 700; }
+  .cert-title { font-family: var(--serif); font-size: 40px; line-height: 1.05; margin: 6px 0 2px; letter-spacing: .01em; }
+  .cert-rule { width: 90px; height: 2px; background: var(--gold); margin: 12px auto 18px; }
+  .cert-lead { font-family: var(--serif); font-style: italic; font-size: 15px; color: var(--text-muted); }
+  .cert-name { font-family: var(--serif); font-size: 34px; font-weight: 700; margin: 12px 0 8px; padding: 0 20px 10px; border-bottom: 1.5px solid #e2e0d8; display: inline-block; min-width: 60%; }
+  .cert-statement { font-family: var(--serif); font-size: 14.5px; line-height: 1.6; color: #2c2b28; max-width: 6in; margin: 16px auto 0; }
+  .cert-stats { display: flex; justify-content: center; gap: 0; margin: 26px auto 0; }
+  .cert-stat { padding: 0 26px; }
+  .cert-stat + .cert-stat { border-left: 1px solid #e2e0d8; }
+  .cert-stat .num { font-family: var(--serif); font-size: 30px; font-weight: 700; color: var(--green-text); }
+  .cert-stat .lbl { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); margin-top: 2px; }
+  .cert-meta { margin-top: 20px; font-size: 12.5px; color: var(--text-muted); }
+  .cert-meta strong { color: #2c2b28; font-weight: 600; }
+  .cert-mid { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; min-height: 70px; padding: 10px 0; }
+  .cert-courses-label { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--gold); font-weight: 700; }
+  .cert-courses-list { font-family: var(--serif); font-size: 13.5px; line-height: 1.75; color: #2c2b28; max-width: 6in; }
+  .cert-courses-list .sep { color: var(--gold-soft); margin: 0 8px; }
+  .cert-sign { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; padding-top: 12px; }
+  .cert-sign.only-seal { justify-content: center; align-items: center; padding-top: 4px; }
+  .cert-sign.only-seal .cert-seal { width: 112px; height: 112px; margin-bottom: 0; }
+  .cert-sign.one-sig { flex-direction: column; align-items: center; gap: 10px; }
+  .cert-sign.one-sig .cert-seal { width: 100px; height: 100px; }
+  .cert-sign.one-sig .slot { max-width: 3in; }
+  .cert-seal { width: 92px; height: 92px; flex-shrink: 0; margin-bottom: 2px; }
+  .cert-sign .slot { flex: 1; max-width: 2.6in; }
+  .cert-sign .line { border-top: 1.2px solid #1a1917; padding-top: 6px; font-size: 12px; }
+  .cert-sign .who { font-weight: 600; }
+  .cert-sign .role { font-size: 11px; color: var(--text-muted); }
+  .cert-foot { font-size: 9.5px; color: var(--text-faint); margin-top: 16px; letter-spacing: .02em; }
+
+  /* Transcript */
+  .tr-head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1a1917; padding-bottom: 12px; margin-bottom: 4px; }
+  .tr-brand { display: flex; align-items: center; gap: 9px; }
+  .tr-brand .logo-icon { width: 28px; height: 28px; }
+  .tr-brand-name { font-size: 13px; font-weight: 700; }
+  .tr-brand-sub { font-size: 10px; color: var(--text-muted); }
+  .tr-title { text-align: right; }
+  .tr-title h2 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
+  .tr-title .sub { font-size: 10.5px; color: var(--text-muted); }
+  .tr-idblock { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 18px; margin: 16px 0 18px; }
+  .tr-idblock .k { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); }
+  .tr-idblock .v { font-size: 13px; font-weight: 600; }
+  .tr-section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--green-text); margin: 20px 0 8px; }
+  table.tr { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.tr th { text-align: left; font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); border-bottom: 1.5px solid #c8c6bc; padding: 6px 8px; }
+  table.tr td { padding: 6px 8px; border-bottom: 1px solid #ececec; vertical-align: top; }
+  table.tr td.num, table.tr th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.tr tr.total td { border-top: 1.5px solid #c8c6bc; border-bottom: none; font-weight: 700; padding-top: 8px; }
+  .course-block { margin-top: 16px; break-inside: avoid; }
+  .course-block h4 { font-size: 12.5px; margin: 0 0 4px; padding-bottom: 3px; border-bottom: 1px solid #e2e0d8; display: flex; justify-content: space-between; }
+  .course-block h4 .meta { font-weight: 500; color: var(--text-muted); font-size: 11px; }
+  .lesson-list { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  .lesson-list td { padding: 3.5px 8px; border-bottom: 1px solid #f2f1ee; }
+  .lesson-list td.date { color: var(--text-muted); white-space: nowrap; text-align: right; width: 1.3in; font-variant-numeric: tabular-nums; }
+  .lesson-list td.tm { color: var(--text-muted); white-space: nowrap; text-align: right; width: 0.9in; font-variant-numeric: tabular-nums; }
+  .tr-note { margin-top: 22px; font-size: 10px; color: var(--text-faint); border-top: 1px solid #e2e0d8; padding-top: 8px; }
+
+  .empty-preview { color: var(--text-faint); text-align: center; padding: 80px 20px; }
+
+  .badge-inline { display: inline-block; background: var(--surface2); border: 1px solid var(--border); border-radius: 20px; padding: 2px 10px; font-size: 11px; color: var(--text-muted); }
+
+  /* ---------- Print ---------- */
+  @media print {
+    @page { size: letter; margin: 0.45in; }
+    body { background: #fff; }
+    header.appbar, .panel, .upload-hero, .drops, #reupload-bar, .no-print { display: none !important; }
+    .wrap { max-width: none; margin: 0; padding: 0; }
+    .editor { display: block; }
+    .preview-scroll { display: block; gap: 0; }
+    .page { width: auto; min-height: 0; box-shadow: none; padding: 0; margin: 0; page-break-after: always; }
+    .page:last-child { page-break-after: auto; }
+    .cert-frame { height: 9.7in; }
+  }
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <div class="logo">
+    <div class="logo-icon">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="2" y="8" width="3" height="6" rx="1" fill="white" opacity="0.9"/>
+        <rect x="6.5" y="5" width="3" height="9" rx="1" fill="white" opacity="0.9"/>
+        <rect x="11" y="2" width="3" height="12" rx="1" fill="white" opacity="0.9"/>
+      </svg>
+    </div>
+    <div>
+      <div class="logo-text">Certificate Generator</div>
+      <div class="logo-sub">Prodigy Solutions — Coursework Certificates</div>
+    </div>
+  </div>
+  <div class="appbar-actions" id="appbar-actions">
+    <a href="./" title="Back to all tools" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--text-muted);font-size:13px;font-weight:600;border:1px solid var(--border-strong);border-radius:var(--radius);padding:7px 12px">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 7l6-5 6 5M4 6v7h8V6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      All tools
+    </a>
+  </div>
+</header>
+
+<div class="wrap">
+  <!-- Upload phase -->
+  <div id="upload-phase">
+    <div class="upload-hero">
+      <h1>Generate a Kolibri completion certificate</h1>
+      <p>Upload the two files you download from Kolibri (Facility → Data). Pick the person, review, and print to PDF. Nothing leaves this page — all processing happens in your browser.</p>
+    </div>
+    <div class="drops">
+      <div class="drop" id="drop-summary" data-kind="summary">
+        <div class="req">Required</div>
+        <h3>Summary logs CSV</h3>
+        <p>Kolibri → Facility → Data → <em>Summary logs</em> → Generate &amp; download.</p>
+        <button class="filebtn" onclick="document.getElementById('file-summary').click()">Choose file…</button>
+        <input type="file" id="file-summary" accept=".csv" hidden>
+        <div class="status" id="status-summary"></div>
+      </div>
+      <div class="drop" id="drop-users" data-kind="users">
+        <div class="opt">Recommended</div>
+        <h3>Users CSV</h3>
+        <p>Same screen → the users / accounts export. Supplies each person's full name.</p>
+        <button class="filebtn" onclick="document.getElementById('file-users').click()">Choose file…</button>
+        <input type="file" id="file-users" accept=".csv" hidden>
+        <div class="status" id="status-users"></div>
+      </div>
+    </div>
+    <p class="upload-hero" style="padding-top:6px"><span class="badge-inline" id="upload-help">Waiting for the Summary logs file…</span></p>
+  </div>
+
+  <!-- Editor phase -->
+  <div id="editor-phase" class="editor" style="display:none">
+    <div class="panel">
+      <div class="panel-body">
+        <h2>Certificate details</h2>
+        <div class="hint" style="margin:-4px 0 12px">Signatures are optional — leave them blank and the certificate shows just the seal.</div>
+        <div class="field">
+          <label>Person</label>
+          <input id="f-search" placeholder="Search name or username…" oninput="renderLearnerOptions()">
+          <select id="f-learner" onchange="onSelectLearner()" style="margin-top:6px"></select>
+          <div class="hint" id="learner-count"></div>
+        </div>
+        <div class="field">
+          <label>Name as printed</label>
+          <input id="f-name" oninput="renderPreview()">
+        </div>
+        <div class="field">
+          <label>Facility</label>
+          <input id="f-facility" oninput="renderPreview()">
+        </div>
+        <div class="two">
+          <div class="field">
+            <label>Study period — from</label>
+            <input id="f-from" oninput="renderPreview()">
+          </div>
+          <div class="field">
+            <label>to</label>
+            <input id="f-to" oninput="renderPreview()">
+          </div>
+        </div>
+        <div class="field">
+          <label>Date issued</label>
+          <input id="f-date" oninput="renderPreview()">
+        </div>
+        <div class="field">
+          <label>Certificate statement</label>
+          <textarea id="f-statement" oninput="renderPreview()"></textarea>
+        </div>
+        <div class="two">
+          <div class="field">
+            <label>Signature 1 — name</label>
+            <input id="f-sig1" oninput="renderPreview()" placeholder="e.g. J. Smith">
+          </div>
+          <div class="field">
+            <label>Title</label>
+            <input id="f-sig1t" oninput="renderPreview()" placeholder="Education Coordinator">
+          </div>
+        </div>
+        <div class="two">
+          <div class="field">
+            <label>Signature 2 — name</label>
+            <input id="f-sig2" oninput="renderPreview()" placeholder="(optional)">
+          </div>
+          <div class="field">
+            <label>Title</label>
+            <input id="f-sig2t" oninput="renderPreview()" placeholder="(optional)">
+          </div>
+        </div>
+      </div>
+      <div class="panel-foot">
+        <button class="primary" onclick="window.print()" style="width:100%">Print / Save as PDF</button>
+        <div class="hint">In the print dialog choose <strong>Save as PDF</strong> as the destination.</div>
+      </div>
+    </div>
+
+    <div>
+      <div id="reupload-bar" class="no-print" style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;color:var(--text-muted);font-size:12.5px">
+        <span id="loaded-info"></span>
+        <button onclick="resetAll()">Load different files</button>
+      </div>
+      <div class="preview-scroll" id="preview">
+        <div class="empty-preview">Select a person to preview the certificate.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================= CSV parsing ================= */
+function parseCSV(text) {
+  text = text.replace(/^﻿/, '');
+  const rows = []; let row = []; let field = ''; let i = 0; let q = false;
+  while (i < text.length) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') {
+        if (text[i+1] === '"') { field += '"'; i += 2; continue; }
+        q = false; i++; continue;
+      }
+      field += c; i++; continue;
+    }
+    if (c === '"') { q = true; i++; continue; }
+    if (c === ',') { row.push(field); field = ''; i++; continue; }
+    if (c === '\r') { i++; continue; }
+    if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; i++; continue; }
+    field += c; i++;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  if (!rows.length) return { headers: [], rows: [] };
+  const headers = rows[0];
+  const out = [];
+  for (let r = 1; r < rows.length; r++) {
+    if (rows[r].length === 1 && rows[r][0] === '') continue;
+    const o = {};
+    for (let c = 0; c < headers.length; c++) o[headers[c]] = rows[r][c] === undefined ? '' : rows[r][c];
+    out.push(o);
+  }
+  return { headers, rows: out };
+}
+
+function findCol(headers, ...terms) {
+  const norm = headers.map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  for (const t of terms) {
+    const key = t.toLowerCase().replace(/[^a-z0-9]/g, '');
+    let i = norm.findIndex(h => h === key);
+    if (i === -1) i = norm.findIndex(h => h.includes(key));
+    if (i !== -1) return headers[i];
+  }
+  return '';
+}
+
+/* ================= State ================= */
+const state = {
+  summary: null,      // parsed summary logs
+  sCols: {},          // detected columns
+  usersMap: {},       // username -> full name
+  learners: [],       // [{username, fullname, secs, done, items, courses}]
+  selected: null,     // username
+  data: null          // aggregated data for selected learner
+};
+
+/* ================= File handling ================= */
+function handleFile(file, kind) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const parsed = parseCSV(e.target.result);
+    if (kind === 'summary') loadSummary(parsed, file.name);
+    else loadUsers(parsed, file.name);
+  };
+  reader.readAsText(file);
+}
+
+function loadSummary(parsed, filename) {
+  const h = parsed.headers;
+  const cols = {
+    facility: findCol(h, 'facilityname', 'facility'),
+    username: findCol(h, 'username', 'user', 'learner'),
+    channel:  findCol(h, 'channelname', 'channel'),
+    folder1:  findCol(h, 'folderlevel1', 'folder1'),
+    title:    findCol(h, 'contenttitle', 'title', 'content'),
+    first:    findCol(h, 'timeoffirstinteraction', 'firstinteraction', 'firstinteract'),
+    last:     findCol(h, 'timeoflastinteraction', 'lastinteraction', 'lastinteract'),
+    completed:findCol(h, 'timeofcompletion', 'completiontime', 'completion'),
+    secs:     findCol(h, 'timespentsec', 'timespent', 'seconds', 'duration'),
+    progress: findCol(h, 'progress01', 'progress'),
+    kind:     findCol(h, 'contentkind', 'kind')
+  };
+  if (!cols.username || !cols.secs) {
+    setStatus('summary', 'Could not find Username / Time Spent columns — is this the Summary logs file?', true);
+    return;
+  }
+  state.summary = parsed; state.sCols = cols;
+  // pick up facility from filename e.g. "Stephens County OK_bc3e_content_summary..."
+  const m = filename && filename.match(/^(.+?)_[a-f0-9]{3,}_/i);
+  state.facilityHint = m ? m[1].trim() : '';
+  setStatus('summary', parsed.rows.length + ' rows loaded ✓', false);
+  document.getElementById('drop-summary').classList.add('loaded');
+  buildLearners();
+  maybeEnterEditor();
+}
+
+function loadUsers(parsed, filename) {
+  const h = parsed.headers;
+  const uCol = findCol(h, 'usernameusername', 'username', 'user');
+  const nCol = findCol(h, 'fullnamefullname', 'fullname', 'name');
+  if (!uCol || !nCol) { setStatus('users', 'Could not find Username / Full name columns.', true); return; }
+  const map = {};
+  parsed.rows.forEach(r => {
+    const u = (r[uCol] || '').trim();
+    const n = (r[nCol] || '').trim();
+    if (u) map[u] = n;
+  });
+  state.usersMap = map;
+  setStatus('users', Object.keys(map).length + ' names loaded ✓', false);
+  document.getElementById('drop-users').classList.add('loaded');
+  if (state.summary) { buildLearners(); if (state.selected) onSelectLearner(true); }
+}
+
+function setStatus(kind, msg, err) {
+  const el = document.getElementById('status-' + kind);
+  el.textContent = msg;
+  el.style.color = err ? '#8b1f1f' : 'var(--green-text)';
+}
+
+/* ================= Aggregation ================= */
+function toNum(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function datePart(v) { return (v || '').slice(0, 10); }
+
+function buildLearners() {
+  const c = state.sCols;
+  const agg = {};
+  state.summary.rows.forEach(r => {
+    const u = (r[c.username] || '').trim();
+    if (!u) return;
+    if (!agg[u]) agg[u] = { username: u, secs: 0, items: 0, done: 0, courses: {} };
+    const d = agg[u];
+    d.items++;
+    const secs = toNum(r[c.secs]);
+    d.secs += secs;
+    const prog = toNum(r[c.progress]);
+    if (prog >= 1) d.done++;
+    const ch = (r[c.channel] || 'Other').trim() || 'Other';
+    d.courses[ch] = true;
+  });
+  state.learners = Object.values(agg).map(d => ({
+    username: d.username,
+    fullname: state.usersMap[d.username] || '',
+    secs: d.secs, items: d.items, done: d.done, courses: Object.keys(d.courses).length
+  })).sort((a, b) => {
+    const an = (a.fullname || a.username).toLowerCase();
+    const bn = (b.fullname || b.username).toLowerCase();
+    return an < bn ? -1 : an > bn ? 1 : 0;
+  });
+  renderLearnerOptions();
+}
+
+function buildLearnerData(username) {
+  const c = state.sCols;
+  const rows = state.summary.rows.filter(r => (r[c.username] || '').trim() === username);
+  const courses = {};
+  let totalSecs = 0, totalDone = 0, totalItems = 0;
+  let minDate = '', maxDate = '';
+  rows.forEach(r => {
+    const ch = (r[c.channel] || 'Other').trim() || 'Other';
+    if (!courses[ch]) courses[ch] = { name: ch, secs: 0, items: 0, done: 0, lessons: [], lastDate: '' };
+    const co = courses[ch];
+    const secs = toNum(r[c.secs]);
+    const prog = toNum(r[c.progress]);
+    const first = r[c.first] || '';
+    const last = r[c.last] || '';
+    const comp = (r[c.completed] || '').trim() || last;
+    co.secs += secs; co.items++; totalSecs += secs; totalItems++;
+    // track period from first-interaction dates
+    const fd = datePart(first);
+    if (fd) { if (!minDate || fd < minDate) minDate = fd; }
+    const ld = datePart(last || comp);
+    if (ld) { if (!maxDate || ld > maxDate) maxDate = ld; }
+    if (prog >= 1) {
+      co.done++; totalDone++;
+      const cd = datePart(comp);
+      if (cd && cd > co.lastDate) co.lastDate = cd;
+      co.lessons.push({ title: (r[c.title] || 'Untitled').trim(), date: cd, secs: secs });
+    }
+  });
+  // sort courses by time desc; keep only courses with completed lessons for detail, all for summary
+  const courseList = Object.values(courses).sort((a, b) => b.secs - a.secs);
+  courseList.forEach(co => co.lessons.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)));
+  const facility = (rows[0] && rows[0][c.facility]) ? rows[0][c.facility].trim() : (state.facilityHint || '');
+  return { username, facility, courses: courseList, totalSecs, totalDone, totalItems, minDate, maxDate };
+}
+
+/* ================= Formatting ================= */
+function fmtHours(secs) {
+  const h = secs / 3600;
+  if (h >= 10) return h.toFixed(0);
+  return h.toFixed(1);
+}
+function fmtHM(secs) {
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+  if (h === 0 && m === 0) return '<1m';
+  if (h === 0) return m + 'm';
+  return h + 'h ' + m + 'm';
+}
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function prettyDate(iso) {
+  if (!iso || iso.length < 10) return iso || '';
+  const y = iso.slice(0,4), mo = parseInt(iso.slice(5,7),10), d = parseInt(iso.slice(8,10),10);
+  return MONTHS[mo-1] + ' ' + d + ', ' + y;
+}
+function todayISO() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
+
+/* ================= UI: learner select ================= */
+function renderLearnerOptions() {
+  const q = (document.getElementById('f-search').value || '').toLowerCase().trim();
+  const sel = document.getElementById('f-learner');
+  const cur = state.selected;
+  const filtered = state.learners.filter(l => {
+    if (!q) return true;
+    return (l.fullname || '').toLowerCase().includes(q) || l.username.toLowerCase().includes(q);
+  });
+  sel.innerHTML = '';
+  filtered.forEach(l => {
+    const o = document.createElement('option');
+    o.value = l.username;
+    const nm = l.fullname || l.username;
+    o.textContent = nm + '  ·  ' + l.username + '  ·  ' + fmtHM(l.secs) + ', ' + l.done + ' done';
+    sel.appendChild(o);
+  });
+  document.getElementById('learner-count').textContent =
+    filtered.length + ' of ' + state.learners.length + ' learners';
+  if (cur && filtered.some(l => l.username === cur)) sel.value = cur;
+}
+
+function onSelectLearner(keepFields) {
+  const sel = document.getElementById('f-learner');
+  const username = sel.value;
+  if (!username) return;
+  state.selected = username;
+  state.data = buildLearnerData(username);
+  if (!keepFields) {
+    const l = state.learners.find(x => x.username === username);
+    document.getElementById('f-name').value = (l && l.fullname) ? l.fullname : username;
+    document.getElementById('f-facility').value = state.data.facility || '';
+    document.getElementById('f-from').value = prettyDate(state.data.minDate);
+    document.getElementById('f-to').value = prettyDate(state.data.maxDate);
+    document.getElementById('f-date').value = prettyDate(todayISO());
+    if (!document.getElementById('f-statement').value) {
+      document.getElementById('f-statement').value =
+        'has demonstrated dedication to educational self-improvement through the Kolibri learning program, successfully completing the coursework detailed in the accompanying record of study.';
+    }
+  }
+  renderPreview();
+}
+
+/* ================= Preview render ================= */
+function val(id) { return document.getElementById(id).value.trim(); }
+
+function renderPreview() {
+  if (!state.data) return;
+  const d = state.data;
+  const name = val('f-name') || d.username;
+  const facility = val('f-facility');
+  const from = val('f-from'), to = val('f-to');
+  const dateIssued = val('f-date');
+  const statement = val('f-statement');
+  const sig1 = val('f-sig1'), sig1t = val('f-sig1t');
+  const sig2 = val('f-sig2'), sig2t = val('f-sig2t');
+  const period = (from && to) ? (from === to ? from : from + ' – ' + to) : (from || to || '');
+
+  const logoIcon =
+    '<div class="logo-icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none">' +
+    '<rect x="2" y="8" width="3" height="6" rx="1" fill="white" opacity="0.9"/>' +
+    '<rect x="6.5" y="5" width="3" height="9" rx="1" fill="white" opacity="0.9"/>' +
+    '<rect x="11" y="2" width="3" height="12" rx="1" fill="white" opacity="0.9"/></svg></div>';
+
+  /* ---- Certificate page ---- */
+  // courses in which at least one lesson was completed, by time spent
+  const completedCourses = d.courses.filter(co => co.done > 0);
+  const courseListHtml = (completedCourses.length ? completedCourses : d.courses)
+    .map(co => esc(co.name)).join('<span class="sep">•</span>');
+
+  function sigSlot(who, role) {
+    return '<div class="slot"><div class="line"><div class="who">' + (esc(who) || '&nbsp;') + '</div>' +
+      '<div class="role">' + esc(role || 'Authorized Signature') + '</div></div></div>';
+  }
+  // Signatures are optional. Only render lines for the ones actually filled in.
+  const sigs = [];
+  if (sig1 || sig1t) sigs.push(sigSlot(sig1, sig1t));
+  if (sig2 || sig2t) sigs.push(sigSlot(sig2, sig2t));
+  const sealSvg =
+    '<svg class="cert-seal" viewBox="0 0 120 120" fill="none">' +
+      '<circle cx="60" cy="60" r="55" stroke="#a67c1a" stroke-width="2"/>' +
+      '<circle cx="60" cy="60" r="47" stroke="#c9a445" stroke-width="1"/>' +
+      '<circle cx="60" cy="60" r="47" stroke="#c9a445" stroke-width="1" stroke-dasharray="1 4"/>' +
+      '<g fill="#1a1917" transform="translate(60,52)">' +
+        '<path d="M0 -13 L20 -5 L0 3 L-20 -5 Z"/>' +
+        '<path d="M-12 -1 L-12 8 C-12 13 12 13 12 8 L12 -1 L0 5 Z"/>' +
+        '<path d="M20 -5 L20 7" stroke="#1a1917" stroke-width="1.4"/>' +
+        '<circle cx="20" cy="8" r="2"/>' +
+      '</g>' +
+      '<text x="60" y="84" text-anchor="middle" font-family="Georgia, serif" font-size="8.5" letter-spacing="2.5" fill="#a67c1a">COMPLETED</text>' +
+      '<text x="60" y="97" text-anchor="middle" font-family="Georgia, serif" font-size="6" letter-spacing="1.5" fill="#8a8378">PRODIGY SOLUTIONS</text>' +
+    '</svg>';
+
+  const cert =
+    '<div class="page"><div class="cert-frame"><div class="cert-inner">' +
+      '<div class="cert-brand">' + logoIcon +
+        '<div><div class="cert-brand-name">PRODIGY SOLUTIONS</div>' +
+        '<div class="cert-brand-sub">Correctional Education</div></div></div>' +
+      '<div class="cert-eyebrow">Certificate of Completion</div>' +
+      '<div class="cert-title">Certificate of Achievement</div>' +
+      '<div class="cert-rule"></div>' +
+      '<div class="cert-lead">This certifies that</div>' +
+      '<div class="cert-name">' + esc(name) + '</div>' +
+      '<div class="cert-statement">' + esc(statement) + '</div>' +
+      '<div class="cert-stats">' +
+        '<div class="cert-stat"><div class="num">' + fmtHours(d.totalSecs) + '</div><div class="lbl">Hours of Study</div></div>' +
+        '<div class="cert-stat"><div class="num">' + (completedCourses.length || d.courses.length) + '</div><div class="lbl">Courses</div></div>' +
+        '<div class="cert-stat"><div class="num">' + d.totalDone + '</div><div class="lbl">Lessons Completed</div></div>' +
+      '</div>' +
+      '<div class="cert-meta">' +
+        (facility ? '<div><strong>Facility:</strong> ' + esc(facility) + '</div>' : '') +
+        (period ? '<div><strong>Period of study:</strong> ' + esc(period) + '</div>' : '') +
+        (dateIssued ? '<div><strong>Issued:</strong> ' + esc(dateIssued) + '</div>' : '') +
+      '</div>' +
+      '<div class="cert-mid">' +
+        '<div class="cert-courses-label">Courses Completed</div>' +
+        '<div class="cert-courses-list">' + courseListHtml + '</div>' +
+      '</div>' +
+      (sigs.length === 0
+        ? '<div class="cert-sign only-seal">' + sealSvg + '</div>'
+        : sigs.length === 1
+          ? '<div class="cert-sign one-sig">' + sealSvg + sigs[0] + '</div>'
+          : '<div class="cert-sign">' + sigs[0] + sealSvg + sigs[1] + '</div>') +
+      '<div class="cert-foot">Generated from official Kolibri learning records · Prodigy Solutions Coursework Program</div>' +
+    '</div></div></div>';
+
+  /* ---- Transcript page(s) ---- */
+  const summaryRows = d.courses.map(co =>
+    '<tr><td>' + esc(co.name) + '</td>' +
+    '<td class="num">' + co.done + '</td>' +
+    '<td class="num">' + fmtHM(co.secs) + '</td>' +
+    '<td class="num">' + (co.lastDate ? prettyDate(co.lastDate) : '—') + '</td></tr>'
+  ).join('');
+
+  const detailBlocks = d.courses.filter(co => co.done > 0).map(co => {
+    const rows = co.lessons.map(le =>
+      '<tr><td>' + esc(le.title) + '</td>' +
+      '<td class="tm">' + fmtHM(le.secs) + '</td>' +
+      '<td class="date">' + (le.date ? prettyDate(le.date) : '—') + '</td></tr>'
+    ).join('');
+    return '<div class="course-block"><h4><span>' + esc(co.name) + '</span>' +
+      '<span class="meta">' + co.done + ' completed · ' + fmtHM(co.secs) + '</span></h4>' +
+      '<table class="lesson-list">' + rows + '</table></div>';
+  }).join('');
+
+  const idblock =
+    '<div class="tr-idblock">' +
+      '<div><div class="k">Name</div><div class="v">' + esc(name) + '</div></div>' +
+      '<div><div class="k">Username</div><div class="v">' + esc(d.username) + '</div></div>' +
+      '<div><div class="k">Facility</div><div class="v">' + esc(facility || '—') + '</div></div>' +
+      '<div><div class="k">Period</div><div class="v">' + esc(period || '—') + '</div></div>' +
+    '</div>';
+
+  const transcript =
+    '<div class="page">' +
+      '<div class="tr-head"><div class="tr-brand">' + logoIcon +
+        '<div><div class="tr-brand-name">Prodigy Solutions</div>' +
+        '<div class="tr-brand-sub">Correctional Education</div></div></div>' +
+        '<div class="tr-title"><h2>Record of Study</h2><div class="sub">Kolibri coursework transcript</div></div>' +
+      '</div>' +
+      idblock +
+      '<div class="tr-section-label">Course Summary</div>' +
+      '<table class="tr"><thead><tr><th>Course</th><th class="num">Lessons&nbsp;Completed</th>' +
+        '<th class="num">Time</th><th class="num">Most&nbsp;Recent</th></tr></thead><tbody>' +
+        summaryRows +
+        '<tr class="total"><td>Total</td><td class="num">' + d.totalDone + '</td>' +
+        '<td class="num">' + fmtHM(d.totalSecs) + '</td><td class="num"></td></tr>' +
+      '</tbody></table>' +
+      '<div class="tr-section-label">Completed Coursework</div>' +
+      (detailBlocks || '<div class="hint">No fully-completed lessons recorded in this period.</div>') +
+      '<div class="tr-note">This transcript reflects activity recorded in Kolibri' +
+        (period ? ' during ' + esc(period) : '') + '. "Lessons completed" indicates content marked 100% complete. ' +
+        'Total hours reflect time actively engaged with learning materials, including items still in progress. ' +
+        'Issued ' + esc(dateIssued) + '.</div>' +
+    '</div>';
+
+  document.getElementById('preview').innerHTML = cert + transcript;
+}
+
+/* ================= Phase / reset ================= */
+function maybeEnterEditor() {
+  if (!state.summary) return;
+  document.getElementById('upload-phase').style.display = 'none';
+  document.getElementById('editor-phase').style.display = 'grid';
+  const info = state.summary.rows.length + ' records';
+  document.getElementById('loaded-info').textContent =
+    'Loaded: ' + info + (Object.keys(state.usersMap).length ? ' · ' + Object.keys(state.usersMap).length + ' names' : ' · no users file (names = usernames)');
+  renderLearnerOptions();
+  // auto-select first learner for immediate preview
+  const sel = document.getElementById('f-learner');
+  if (sel.options.length) { sel.selectedIndex = 0; onSelectLearner(); }
+}
+
+function resetAll() {
+  state.summary = null; state.usersMap = {}; state.learners = []; state.selected = null; state.data = null;
+  document.getElementById('editor-phase').style.display = 'none';
+  document.getElementById('upload-phase').style.display = 'block';
+  ['summary','users'].forEach(k => { setStatus(k, '', false); document.getElementById('drop-'+k).classList.remove('loaded'); });
+  document.getElementById('file-summary').value = '';
+  document.getElementById('file-users').value = '';
+  document.getElementById('preview').innerHTML = '<div class="empty-preview">Select a person to preview the certificate.</div>';
+}
+
+/* ================= Wire up ================= */
+document.getElementById('file-summary').addEventListener('change', e => handleFile(e.target.files[0], 'summary'));
+document.getElementById('file-users').addEventListener('change', e => handleFile(e.target.files[0], 'users'));
+
+['summary','users'].forEach(kind => {
+  const drop = document.getElementById('drop-' + kind);
+  ['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('drag'); }));
+  ['dragleave','dragend','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('drag'); }));
+  drop.addEventListener('drop', e => {
+    const f = e.dataTransfer.files[0];
+    if (f) handleFile(f, kind);
+  });
+});
+</script>
+</body>
+</html>
