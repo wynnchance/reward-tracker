@@ -595,7 +595,15 @@ function renderLearnerOptions() {
   });
   document.getElementById('learner-count').textContent =
     filtered.length + ' of ' + state.learners.length + ' learners';
-  if (cur && filtered.some(l => l.username === cur)) sel.value = cur;
+  if (cur && filtered.some(l => l.username === cur)) {
+    sel.value = cur;
+  } else if (filtered.length) {
+    // The selected learner was filtered out, so the dropdown now shows a different
+    // top result. Programmatic option changes don't fire "change", so sync the
+    // certificate to the visible selection ourselves (once the editor is open).
+    const editorOpen = document.getElementById('editor-phase').style.display !== 'none';
+    if (editorOpen && sel.value && sel.value !== state.selected) onSelectLearner();
+  }
 }
 
 function onSelectLearner(keepFields) {
